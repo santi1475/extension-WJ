@@ -1,0 +1,1 @@
+En manifest.json se debe cambiar el localhost:3000 por el link de acceso en el paso a produccion
