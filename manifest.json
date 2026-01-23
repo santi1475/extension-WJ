@@ -4,6 +4,7 @@
   "version": "1.0",
   "description": "Puente de autologueo para WJ ERP",
   "permissions": [
+    "cookies",
     "scripting",
     "tabs"
   ],
@@ -15,10 +16,11 @@
   "background": {
     "service_worker": "background.js"
   },
-  "content_scripts": [
-    {
-      "matches": ["http://localhost:3000/*"],
-      "js": ["content_buzone.js"]
-    }
-  ]
+
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:3000/*",
+      "https://midominio-erp.com/*" 
+    ]
+  }
 }
