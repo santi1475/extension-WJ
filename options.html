@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body { font-family: sans-serif; padding: 20px; width: 300px; }
+    label { display: block; margin-bottom: 5px; font-weight: bold; }
+    input { width: 100%; padding: 8px; margin-bottom: 15px; box-sizing: border-box;}
+    button { background: #007bff; color: white; border: none; padding: 10px 15px; cursor: pointer; border-radius: 4px; }
+    button:hover { background: #0056b3; }
+    #status { margin-top: 10px; color: green; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <h2>Configuración WJ</h2>
+  
+  <label for="targetUrl">URL del ERP (Origen permitido):</label>
+  <input type="text" id="targetUrl" placeholder="Ej: http://localhost:3000">
+
+  <button id="save">Guardar Configuración</button>
+  <div id="status"></div>
+
+  <script src="options.js"></script>
+</body>
+</html>

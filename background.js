@@ -1,21 +1,25 @@
-chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-  
-  const allowedOrigins = ["http://localhost:3000", "https://midominio-erp.com"];
-  const isAllowed = allowedOrigins.some(origin => sender.url.startsWith(origin));
-
-  if (!isAllowed) {
-     console.warn("Origen no permitido:", sender.url);
-     return;
-  }
-
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "START_LOGIN") {
-    handleLogin(message.payload);
+    
+    chrome.storage.sync.get(['targetUrl'], (items) => {
+      const configuredOrigin = items.targetUrl || "http://localhost:3000";
+      
+      if (sender.origin.startsWith(configuredOrigin) || sender.url.startsWith(configuredOrigin)) {
+         handleLogin(message.payload);
+         sendResponse({status: "started"});
+      } else {
+         console.warn(`Origen ${sender.origin} no coincide con la configuración ${configuredOrigin}`);
+         sendResponse({status: "ignored", reason: "origin_mismatch"});
+      }
+    });
+
+    return true; // Indicates that sendResponse will be called asynchronously
   }
 });
 
 async function handleLogin(data) {
   const { url, credenciales, tipo } = data;
-  console.log("Limpiando sesión anterior...");
+  console.log("Iniciando proceso para:", url);
   
   await clearCookiesForUrl(url);
 
@@ -25,23 +29,25 @@ async function handleLogin(data) {
     state: "maximized",
     focused: true
   }, (window) => {
-    if (!window || !window.tabs || window.tabs.length === 0) {
-        console.error("ERROR: No se pudo crear la ventana o no tiene pestañas.");
-        return;
-    }
+    if (!window || !window.tabs || window.tabs.length === 0) return;
     
     const tabId = window.tabs[0].id;
     chrome.tabs.onUpdated.addListener(function listener(updatedTabId, changeInfo) {
       if (updatedTabId === tabId && changeInfo.status === "complete") {        
-        chrome.tabs.onUpdated.removeListener(listener);
-
+        
         chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: fillFormLogic,
           args: [credenciales, tipo], 
         })
-        .then(() => console.log("Script inyectado exitosamente."))
-        .catch((err) => console.error("ERROR al inyectar script:", err));
+        .then(() => {
+             console.log("Script inyectado exitosamente.");
+             chrome.tabs.onUpdated.removeListener(listener); 
+        })
+        .catch((err) => {
+             console.log("Intento de inyección fallido (posible redirección):", err.message);
+             // No removemos el listener, esperamos al siguiente evento 'complete'
+        });
       }
     });
   });

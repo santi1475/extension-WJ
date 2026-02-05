@@ -1,26 +1,30 @@
 {
   "manifest_version": 3,
   "name": "WJ AutoLogin",
-  "version": "1.0",
+  "version": "1.1",
   "description": "Puente de autologueo para WJ ERP",
   "permissions": [
     "cookies",
     "scripting",
-    "tabs"
+    "tabs",
+    "storage" 
   ],
   "host_permissions": [
     "http://localhost:3000/*", 
     "https://*.sunat.gob.pe/*",
-    "https://*.afpnet.com.pe/*" 
+    "https://midominio-erp.com/*"
   ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": false
+  },
   "background": {
     "service_worker": "background.js"
   },
-
-  "externally_connectable": {
-    "matches": [
-      "http://localhost:3000/*",
-      "https://midominio-erp.com/*" 
-    ]
-  }
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:3000/*", "https://midominio-erp.com/*"],
+      "js": ["content_WJ.js"]
+    }
+  ]
 }
