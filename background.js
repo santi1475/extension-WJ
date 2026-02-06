@@ -1,25 +1,25 @@
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "START_LOGIN") {
     
-    chrome.storage.sync.get(['targetUrl'], (items) => {
-      const configuredOrigin = items.targetUrl || "http://localhost:3000";
+    chrome.storage.sync.get(['targetOrigin'], (items) => {
+      const authorizedOrigin = items.targetOrigin;
       
-      if (sender.origin.startsWith(configuredOrigin) || sender.url.startsWith(configuredOrigin)) {
+      if (authorizedOrigin && sender.origin === authorizedOrigin) {
          handleLogin(message.payload);
          sendResponse({status: "started"});
       } else {
-         console.warn(`Origen ${sender.origin} no coincide con la configuración ${configuredOrigin}`);
-         sendResponse({status: "ignored", reason: "origin_mismatch"});
+         console.warn(`Intento de acceso no autorizado desde: ${sender.origin}`);
+         sendResponse({status: "ignored", reason: "unauthorized"});
       }
     });
 
-    return true; // Indicates that sendResponse will be called asynchronously
+    return true;
   }
 });
 
 async function handleLogin(data) {
   const { url, credenciales, tipo } = data;
-  console.log("Iniciando proceso para:", url);
+  console.log("Iniciando automatización en:", url);
   
   await clearCookiesForUrl(url);
 
@@ -32,6 +32,7 @@ async function handleLogin(data) {
     if (!window || !window.tabs || window.tabs.length === 0) return;
     
     const tabId = window.tabs[0].id;
+    
     chrome.tabs.onUpdated.addListener(function listener(updatedTabId, changeInfo) {
       if (updatedTabId === tabId && changeInfo.status === "complete") {        
         
@@ -45,8 +46,7 @@ async function handleLogin(data) {
              chrome.tabs.onUpdated.removeListener(listener); 
         })
         .catch((err) => {
-             console.log("Intento de inyección fallido (posible redirección):", err.message);
-             // No removemos el listener, esperamos al siguiente evento 'complete'
+             console.log("Esperando redirección o carga final...", err.message);
         });
       }
     });
@@ -56,10 +56,7 @@ async function handleLogin(data) {
 function fillFormLogic(creds, tipo) {
   const strategies = {
     SUNAT_SOL: () => {
-      console.log("   - Ejecutando estrategia SUNAT_SOL");
       const ruc = document.querySelector('input[name="nroRuc"]') || document.getElementById("txtRuc");
-      console.log("   - Campo RUC encontrado:", !!ruc);
-      
       const user = document.querySelector('input[name="usuario"]') || document.getElementById("txtUsuario");
       const pass = document.querySelector('input[name="password"]') || document.getElementById("txtContrasena");
       const btn = document.getElementById("btnAceptar");
@@ -73,45 +70,31 @@ function fillFormLogic(creds, tipo) {
         user.dispatchEvent(new Event("input", { bubbles: true }));
         pass.dispatchEvent(new Event("input", { bubbles: true }));
 
-        console.log("   - Valores asignados. Intentando click...");
         if (btn) btn.click();
-      } else {
-        console.error("ERROR: Datos incompletos para SUNAT_SOL");
       }
     },
   };
 
-  if (strategies[tipo]) {
-    strategies[tipo]();
-  } else {
-    console.error("No hay estrategia para:", tipo);
-  }
+  if (strategies[tipo]) strategies[tipo]();
 }
 
 function clearCookiesForUrl(url) {
   return new Promise((resolve) => {
-    const urlObj = new URL(url);
-    const domain = urlObj.hostname;
-
-    chrome.cookies.getAll({ domain: domain }, function(cookies) {
-      if (cookies.length === 0) {
-        resolve();
-        return;
-      }
-
-      let pending = cookies.length;
-      cookies.forEach(function(cookie) {
-        const protocol = cookie.secure ? "https:" : "http:";
-        const cookieUrl = `${protocol}//${cookie.domain}${cookie.path}`;
-
-        chrome.cookies.remove({
-          url: cookieUrl,
-          name: cookie.name
-        }, function() {
-          pending--;
-          if (pending <= 0) resolve();
+    try {
+        const urlObj = new URL(url);
+        const domain = urlObj.hostname;
+        chrome.cookies.getAll({ domain: domain }, function(cookies) {
+          if (!cookies || cookies.length === 0) { resolve(); return; }
+          let pending = cookies.length;
+          cookies.forEach(function(cookie) {
+            const protocol = cookie.secure ? "https:" : "http:";
+            const cookieUrl = `${protocol}//${cookie.domain}${cookie.path}`;
+            chrome.cookies.remove({ url: cookieUrl, name: cookie.name }, () => {
+              pending--;
+              if (pending <= 0) resolve();
+            });
+          });
         });
-      });
-    });
+    } catch (e) { resolve(); }
   });
 }

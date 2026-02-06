@@ -1,30 +1,27 @@
 {
   "manifest_version": 3,
-  "name": "WJ AutoLogin",
-  "version": "1.1",
-  "description": "Puente de autologueo para WJ ERP",
+  "name": "WJ AutoLogin Pro",
+  "version": "2.0",
+  "description": "Puente de autologueo dinámico para WJ ERP",
   "permissions": [
     "cookies",
     "scripting",
     "tabs",
     "storage" 
   ],
+  "optional_host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
   "host_permissions": [
-    "http://localhost:3000/*", 
     "https://*.sunat.gob.pe/*",
-    "https://midominio-erp.com/*"
+    "https://*.afpnet.com.pe/*"
   ],
   "options_ui": {
     "page": "options.html",
-    "open_in_tab": false
+    "open_in_tab": true
   },
   "background": {
     "service_worker": "background.js"
-  },
-  "content_scripts": [
-    {
-      "matches": ["http://localhost:3000/*", "https://midominio-erp.com/*"],
-      "js": ["content_WJ.js"]
-    }
-  ]
+  }
 }
