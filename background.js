@@ -1,32 +1,33 @@
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "START_LOGIN") {
-    console.log("Iniciando login desde:", sender.origin);
+    console.log("Solicitud de login recibida desde:", sender.origin);
     
-    // Validar origen permitido (opcional si ya se confía en el content script)
-    // Pero es buena práctica verificar
-    const allowedOrigins = [
-      "http://localhost:3000", 
-      "https://wj-front.vercel.app", 
-      "https://app.alphatech.com" // Ajustar según producción
-    ];
+    chrome.storage.sync.get(['targetOrigin'], (result) => {
+      const authorizedErp = result.targetOrigin;
+      
+      const allowedOrigins = [
+        authorizedErp,
+        "http://localhost:3000"
+      ];
 
-    const isAllowed = allowedOrigins.some(origin => sender.origin.startsWith(origin));
+      const isAllowed = allowedOrigins.some(allowed => allowed && sender.origin.startsWith(allowed));
 
-    if (isAllowed || true) { // TODO: Refinar seguridad en prod
-        handleLogin(message.payload, sender.tab.id);
-        sendResponse({status: "processing"});
-    } else {
-        console.warn(`Acceso denegado a: ${sender.origin}`);
-        sendResponse({status: "denied"});
-    }
-    return true; // Asíncrono
+      if (isAllowed) {
+          handleLogin(message.payload, sender.tab.id);
+          sendResponse({status: "processing"});
+      } else {
+          console.warn(`BLOQUEADO: Intento de login desde ${sender.origin}. Esperaba: ${authorizedErp}`);
+          sendResponse({status: "denied", reason: "Origin not authorized in Options"});
+      }
+    });
+    
+    return true; 
   }
 });
 
 async function handleLogin(data, callerTabId) {
   const { url, pasos } = data;
   
-  // Notificar inicio
   notifyCaller(callerTabId, "INFO", "Limpiando cookies y abriendo ventana...");
 
   await clearCookiesForUrl(url);
@@ -37,25 +38,36 @@ async function handleLogin(data, callerTabId) {
         return;
     }
     const tabId = win.tabs[0].id;
+    let intentos = 0; // Para evitar bucles infinitos
 
-    // Escuchar actualizaciones de la pestaña de login
-    chrome.tabs.onUpdated.addListener(function listener(uTabId, info) {
+    // Listener con nombre para poder removerlo después
+    const updateListener = function(uTabId, info) {
+      // Solo nos interesa cuando la carga está COMPLETA
       if (uTabId === tabId && info.status === "complete") {
         
-        notifyCaller(callerTabId, "INFO", "Página cargada. Ejecutando scripts...");
+        console.log(`Intento de inyección #${intentos + 1}`);
+        notifyCaller(callerTabId, "INFO", "Página detectada. Intentando inyectar credenciales...");
 
         chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: genericExecutor,
           args: [pasos], 
         }, (results) => {
-            if (chrome.runtime.lastError) {
-                notifyCaller(callerTabId, "ERROR", "Error de ejecución: " + chrome.runtime.lastError.message);
+            const err = chrome.runtime.lastError;
+            
+            if (err) {
+                if (err.message.includes("Frame with ID 0 was removed")) {
+                    console.warn("Detectada redirección rápida. Esperando siguiente carga...");
+                    return;
+                }
+
+                notifyCaller(callerTabId, "ERROR", "Error fatal: " + err.message);
+                chrome.tabs.onUpdated.removeListener(updateListener);
                 return;
             }
-            
-            // Verificar resultado del script
-            if (results && results[0] && results[0].result) {
+
+            chrome.tabs.onUpdated.removeListener(updateListener);
+                        if (results && results[0] && results[0].result) {
                 const res = results[0].result;
                 if (res.success) {
                     notifyCaller(callerTabId, "SUCCESS", "Credenciales ingresadas correctamente.");
@@ -64,11 +76,13 @@ async function handleLogin(data, callerTabId) {
                 }
             }
         });
-
-        // Remover listener para no ejecutar múltiples veces en recargas
-        chrome.tabs.onUpdated.removeListener(listener); 
+        
+        intentos++;
       }
-    });
+    };
+
+    // Activamos el listener
+    chrome.tabs.onUpdated.addListener(updateListener);
   });
 }
 
@@ -76,13 +90,12 @@ function notifyCaller(tabId, type, message) {
     if (tabId) {
         chrome.tabs.sendMessage(tabId, {
             action: "LOGIN_STATUS_UPDATE",
-            type: type, // INFO, SUCCESS, ERROR
+            type: type,
             message: message
         }).catch(err => console.log("No se pudo notificar a la tab:", err));
     }
 }
 
-// Esta función se ejecuta EN EL CONTEXTO DE LA PÁGINA DE SUNAT
 function genericExecutor(pasos) {
   return new Promise(async (resolve) => {
     const wait = (sel) => new Promise(res => {
@@ -93,7 +106,7 @@ function genericExecutor(pasos) {
         if(e) { obs.disconnect(); res(e); }
         });
         obs.observe(document.body, {childList:true, subtree:true});
-        setTimeout(() => { obs.disconnect(); res(null); }, 10000); // 10s timeout
+        setTimeout(() => { obs.disconnect(); res(null); }, 10000);
     });
 
     try {
@@ -107,12 +120,12 @@ function genericExecutor(pasos) {
                 el.value = p.valor;
                 el.dispatchEvent(new Event('input', {bubbles:true}));
                 el.dispatchEvent(new Event('change', {bubbles:true}));
-                el.dispatchEvent(new Event('blur', {bubbles:true})); // A veces necesario
+                el.dispatchEvent(new Event('blur', {bubbles:true}));
             } else if (p.accion === 'click') {
                 el.click();
             }
             
-            await new Promise(r => setTimeout(r, 500)); // Espera entre pasos
+            await new Promise(r => setTimeout(r, 500)); 
         }
         resolve({ success: true });
     } catch(e) { 

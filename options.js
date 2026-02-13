@@ -15,14 +15,48 @@ document.addEventListener('DOMContentLoaded', () => {
   loadPermissions();
 });
 
-els.btnSaveErp.addEventListener('click', () => {
+els.btnSaveErp.addEventListener('click', async () => {
   const url = validateUrl(els.erpInput.value);
   if (!url) return;
-  chrome.storage.sync.set({ targetOrigin: url.origin }, () => {
-    updateErpUI(url.origin);
-    showToast('ERP Conectado Correctamente', 'success');
-  });
+
+  const origin = url.origin;
+
+  try {
+    const granted = await chrome.permissions.request({
+      origins: [`${origin}/*`]
+    });
+
+    if (granted) {
+      chrome.storage.sync.set({ targetOrigin: origin }, async () => {
+        
+        await registerDynamicScript(origin);
+        
+        updateErpUI(origin);
+        showToast('ERP Vinculado e Inyectado Correctamente', 'success');
+      });
+    } else {
+      showToast('Permiso denegado por el usuario', 'error');
+    }
+  } catch (err) {
+    console.error(err);
+    showToast('Error: ' + err.message, 'error');
+  }
 });
+
+async function registerDynamicScript(origin) {
+  const scriptId = 'erp-dynamic-connection';
+  
+  try {
+    await chrome.scripting.unregisterContentScripts({ ids: [scriptId] });
+  } catch (e) { /* Ignorar si no existía */ }
+
+  await chrome.scripting.registerContentScripts([{
+    id: scriptId,
+    js: ['content_WJ.js'],
+    matches: [`${origin}/*`],
+    runAt: 'document_start',
+  }]);
+}
 
 els.btnAddTarget.addEventListener('click', async () => {
   const url = validateUrl(els.targetInput.value);
