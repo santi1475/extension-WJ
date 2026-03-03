@@ -13,7 +13,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const isAllowed = allowedOrigins.some(allowed => allowed && sender.origin.startsWith(allowed));
 
       if (isAllowed) {
-          handleLogin(message.payload, sender.tab.id);
+          handleLogin(message.payload, sender.tab.id, sender.tab.windowId);
           sendResponse({status: "processing"});
       } else {
           console.warn(`BLOQUEADO: Intento de login desde ${sender.origin}. Esperaba: ${authorizedErp}`);
@@ -25,19 +25,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 });
 
-async function handleLogin(data, callerTabId) {
-  const { url, pasos } = data;
+async function handleLogin(data, callerTabId, callerWindowId) {
+  const { url, pasos, openInTab } = data;
   
-  notifyCaller(callerTabId, "INFO", "Limpiando cookies y abriendo ventana...");
+  notifyCaller(callerTabId, "INFO", "Limpiando cookies...");
 
   await clearCookiesForUrl(url);
 
-  chrome.windows.create({ url: url, type: "popup", state: "maximized" }, (win) => {
-    if (!win || !win.tabs || win.tabs.length === 0) {
-        notifyCaller(callerTabId, "ERROR", "No se pudo crear la ventana de login.");
-        return;
-    }
-    const tabId = win.tabs[0].id;
+  if (openInTab) {
+    chrome.tabs.create({ url: url, windowId: callerWindowId, active: true }, (tab) => {
+      if (chrome.runtime.lastError || !tab) {
+          notifyCaller(callerTabId, "ERROR", "No se pudo crear la pestaña de login.");
+          return;
+      }
+      setupInjectionListener(tab.id, callerTabId, pasos);
+    });
+  } else {
+    chrome.windows.create({ url: url, type: "popup", state: "maximized" }, (win) => {
+      if (chrome.runtime.lastError || !win || !win.tabs || win.tabs.length === 0) {
+          notifyCaller(callerTabId, "ERROR", "No se pudo crear la ventana de login.");
+          return;
+      }
+      setupInjectionListener(win.tabs[0].id, callerTabId, pasos);
+    });
+  }
+}
+
+function setupInjectionListener(tabId, callerTabId, pasos) {
     let intentos = 0; // Para evitar bucles infinitos
 
     // Listener con nombre para poder removerlo después
@@ -67,7 +81,7 @@ async function handleLogin(data, callerTabId) {
             }
 
             chrome.tabs.onUpdated.removeListener(updateListener);
-                        if (results && results[0] && results[0].result) {
+            if (results && results[0] && results[0].result) {
                 const res = results[0].result;
                 if (res.success) {
                     notifyCaller(callerTabId, "SUCCESS", "Credenciales ingresadas correctamente.");
@@ -83,7 +97,6 @@ async function handleLogin(data, callerTabId) {
 
     // Activamos el listener
     chrome.tabs.onUpdated.addListener(updateListener);
-  });
 }
 
 function notifyCaller(tabId, type, message) {

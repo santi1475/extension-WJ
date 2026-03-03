@@ -1,17 +1,19 @@
 {
   "manifest_version": 3,
   "name": "WJ AutoLogin Universal",
-  "version": "3.1", 
+  "version": "3.1",
   "permissions": [
     "cookies",
     "scripting",
     "storage",
-    "activeTab"
+    "activeTab",
+    "tabs"
   ],
   "host_permissions": [
     "https://*.sunat.gob.pe/*",
     "https://*.afpnet.com.pe/*",
-    "https://*.sunafil.gob.pe/*"
+    "https://*.sunafil.gob.pe/*",
+    "http://*.sis.gob.pe/*"
   ],
   "optional_host_permissions": [
     "http://*/*",
@@ -20,9 +22,11 @@
   "content_scripts": [
     {
       "matches": [
-        "http://localhost:3000/*" 
+        "http://localhost:3000/*"
       ],
-      "js": ["content_WJ.js"]
+      "js": [
+        "content_WJ.js"
+      ]
     }
   ],
   "options_ui": {
