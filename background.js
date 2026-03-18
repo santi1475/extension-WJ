@@ -30,7 +30,17 @@ async function handleLogin(data, callerTabId, callerWindowId) {
   
   notifyCaller(callerTabId, "INFO", "Limpiando cookies...");
 
+  // ANTES de limpiar
+  const cookiesAntes = await chrome.cookies.getAll({ url: url });
+  console.log('[WJ Extension] Cookies ANTES de limpiar:', 
+    cookiesAntes.map(c => ({ name: c.name, value: c.value }))
+  );
+
   await clearCookiesForUrl(url);
+
+  // DESPUÉS de limpiar
+  const cookiesDespues = await chrome.cookies.getAll({ url: url });
+  console.log('[WJ Extension] Cookies DESPUÉS de limpiar:', cookiesDespues);
 
   if (openInTab) {
     chrome.tabs.create({ url: url, windowId: callerWindowId, active: true }, (tab) => {
@@ -52,42 +62,100 @@ async function handleLogin(data, callerTabId, callerWindowId) {
 }
 
 function setupInjectionListener(tabId, callerTabId, pasos) {
-    let intentos = 0; // Para evitar bucles infinitos
+    let intentos = 0;
+    let inyectando = false;
+    let fallbackTimeout = null;
+    const MAX_INTENTOS = 15; // Límite para evitar loops infinitos de redirect
 
     // Listener con nombre para poder removerlo después
-    const updateListener = function(uTabId, info) {
+    const updateListener = function(uTabId, info, tab) {
+      if (uTabId !== tabId) return;
+
+      // Si la página empieza a cargar (redirección), reseteamos el candado
+      if (info.status === "loading") {
+          console.log(`[WJ Extension] Página recargando/redirigiendo. Reseteando candado de inyección.`);
+          inyectando = false;
+          if (fallbackTimeout) clearTimeout(fallbackTimeout);
+      }
+
       // Solo nos interesa cuando la carga está COMPLETA
-      if (uTabId === tabId && info.status === "complete") {
+      if (info.status === "complete") {
         
-        console.log(`Intento de inyección #${intentos + 1}`);
+        if (inyectando) {
+            console.log(`[WJ Extension] Ignorando evento complete, ya hay una inyección en progreso.`);
+            return;
+        }
+
+        if (intentos >= MAX_INTENTOS) {
+            console.error(`[WJ Extension] Se alcanzó el límite de ${MAX_INTENTOS} intentos. SUNAT está en un loop de redirección.`);
+            notifyCaller(callerTabId, "ERROR", `Login fallido: SUNAT redirigió ${MAX_INTENTOS} veces sin mostrar el formulario.`);
+            chrome.tabs.onUpdated.removeListener(updateListener);
+            return;
+        }
+
+        inyectando = true;
+
+        const currentUrl = tab?.url || '';
+        console.log(`[WJ Extension] Intento de inyección #${intentos + 1} en URL: ${currentUrl}`);
+
+        // Detectar si ya estamos autenticados (SUNAT redirigió al menú post-login)
+        if (currentUrl.includes('MenuInternet.htm') && currentUrl.includes('pestana=')) {
+            console.log(`[WJ Extension] ✅ Autenticación exitosa detectada por URL post-login: ${currentUrl}`);
+            notifyCaller(callerTabId, "SUCCESS", "Login exitoso — sesión activa detectada.");
+            chrome.tabs.onUpdated.removeListener(updateListener);
+            inyectando = false;
+            return;
+        }
+
         notifyCaller(callerTabId, "INFO", "Página detectada. Intentando inyectar credenciales...");
+
+        // Timeout de seguridad en caso de que executeScript nunca retorne
+        fallbackTimeout = setTimeout(() => {
+            if (inyectando) {
+                console.warn(`[WJ Extension] Timeout de seguridad (15s): executeScript no retornó. Reseteando candado.`);
+                inyectando = false;
+            }
+        }, 15000);
 
         chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: genericExecutor,
           args: [pasos], 
         }, (results) => {
+            inyectando = false;
+            if (fallbackTimeout) clearTimeout(fallbackTimeout);
+
             const err = chrome.runtime.lastError;
             
+            console.log(`[WJ Extension] Callback de executeScript. Error:`, err?.message, `| Resultados crudos:`, results);
+
             if (err) {
-                if (err.message.includes("Frame with ID 0 was removed")) {
-                    console.warn("Detectada redirección rápida. Esperando siguiente carga...");
-                    return;
+                if (err.message.includes("Frame with ID 0 was removed") || err.message.includes("The tab was closed")) {
+                    console.warn(`[WJ Extension] Detectada redirección rápida o cierre. Esperando...`);
+                    return; // No removemos el listener, esperamos al next complete
                 }
 
+                console.error(`[WJ Extension] Error fatal al inyectar:`, err.message);
                 notifyCaller(callerTabId, "ERROR", "Error fatal: " + err.message);
                 chrome.tabs.onUpdated.removeListener(updateListener);
                 return;
             }
 
+            // Si result es null, la página redirigió y Chrome destruyó el script.
+            // NO removemos el listener — esperamos al siguiente "complete" en la página final.
+            if (!results || !results[0] || results[0].result === null || results[0].result === undefined) {
+                console.warn(`[WJ Extension] Resultado nulo — la página redirigió durante la inyección. Esperando siguiente carga...`);
+                return; // Mantener listener vivo
+            }
+
             chrome.tabs.onUpdated.removeListener(updateListener);
-            if (results && results[0] && results[0].result) {
-                const res = results[0].result;
-                if (res.success) {
-                    notifyCaller(callerTabId, "SUCCESS", "Credenciales ingresadas correctamente.");
-                } else {
-                    notifyCaller(callerTabId, "ERROR", "Fallo en la automatización: " + res.error);
-                }
+            const res = results[0].result;
+            if (res.success) {
+                console.log(`[WJ Extension] -> ÉXITO devuelto por la pestaña`);
+                notifyCaller(callerTabId, "SUCCESS", "Credenciales ingresadas correctamente.");
+            } else {
+                console.error(`[WJ Extension] -> FALLO devuelto por la pestaña:`, res.error);
+                notifyCaller(callerTabId, "ERROR", "Fallo en la automatización: " + res.error);
             }
         });
         
@@ -126,37 +194,109 @@ function genericExecutor(pasos) {
         for (const p of pasos) {
             const el = await wait(p.selector);
             if(!el) {
+                // Diagnóstico: capturar qué hay en la página cuando no se encuentra el selector
+                const pageInfo = {
+                    url: window.location.href,
+                    title: document.title,
+                    inputs: Array.from(document.querySelectorAll('input')).map(i => ({
+                        id: i.id, name: i.name, type: i.type, placeholder: i.placeholder,
+                        className: i.className
+                    })),
+                    forms: Array.from(document.querySelectorAll('form')).map(f => ({
+                        id: f.id, action: f.action, method: f.method
+                    })),
+                    buttons: Array.from(document.querySelectorAll('button, input[type="submit"]')).map(b => ({
+                        id: b.id, text: b.textContent?.trim(), type: b.type
+                    })),
+                    bodySnippet: document.body?.innerText?.substring(0, 500)
+                };
+                console.error(`[WJ Extension] Selector no encontrado: ${p.selector}. Diagnóstico de la página:`, pageInfo);
                 return resolve({ success: false, error: `Selector no encontrado: ${p.selector}` });
             }
             
+            console.log(`[WJ Extension] Procesando paso con selector: ${p.selector}, acción: ${p.accion}`);
+            
             if (p.accion === 'escribir') {
-                el.value = p.valor;
-                el.dispatchEvent(new Event('input', {bubbles:true}));
-                el.dispatchEvent(new Event('change', {bubbles:true}));
-                el.dispatchEvent(new Event('blur', {bubbles:true}));
+                console.log(`[WJ Extension] Valor actual antes de inyectar: "${el.value}"`);
+                
+                // Limpiar el campo primero
+                el.focus();
+                el.value = '';
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                
+                // Simular tipeo carácter por carácter
+                for (const char of p.valor) {
+                    el.dispatchEvent(new KeyboardEvent('keydown', {key: char, code: 'Key' + char.toUpperCase(), bubbles: true}));
+                    el.dispatchEvent(new KeyboardEvent('keypress', {key: char, code: 'Key' + char.toUpperCase(), bubbles: true}));
+                    
+                    // Actualizar el valor acumulando cada carácter
+                    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+                    nativeSetter.call(el, el.value + char);
+                    
+                    // InputEvent con data — esto es lo que React escucha
+                    el.dispatchEvent(new InputEvent('input', {
+                        bubbles: true,
+                        inputType: 'insertText',
+                        data: char
+                    }));
+                    
+                    el.dispatchEvent(new KeyboardEvent('keyup', {key: char, code: 'Key' + char.toUpperCase(), bubbles: true}));
+                }
+                
+                // Eventos finales
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                el.dispatchEvent(new Event('blur', {bubbles: true}));
+                
+                console.log(`[WJ Extension] Valor tras simular tipeo: "${el.value}" (esperado: "${p.valor}")`);
+                
             } else if (p.accion === 'click') {
+                const inputs = document.querySelectorAll('input');
+                const inputsState = Array.from(inputs).map(i => ({ id: i.id, name: i.name, type: i.type, value: i.value }));
+                console.log(`[WJ Extension] Haciendo click en ${p.selector} - Estado de campos input:`, inputsState);
                 el.click();
             }
             
             await new Promise(r => setTimeout(r, 500)); 
         }
+        console.log(`[WJ Extension] Ejecución exitosa de todos los pasos.`);
         resolve({ success: true });
     } catch(e) { 
+        console.error(`[WJ Extension] Excepción en genericExecutor:`, e);
         resolve({ success: false, error: e.toString() });
     }
   });
 }
 
-function clearCookiesForUrl(url) {
-  return new Promise(r => {
-    try {
-      const domain = new URL(url).hostname;
-      chrome.cookies.getAll({domain}, cookies => {
-        const proms = cookies.map(c => chrome.cookies.remove({
-          url: (c.secure ? "https://" : "http://") + c.domain + c.path, name: c.name
-        }));
-        Promise.all(proms).then(r);
-      });
-    } catch { r(); }
-  });
+async function clearCookiesForUrl(url) {
+  try {
+      const cookies = await chrome.cookies.getAll({ domain: 'sunat.gob.pe' });
+      
+      console.log(`[WJ Extension] Cookies a eliminar (${cookies.length}):`, 
+        cookies.map(c => ({ name: c.name, domain: c.domain, path: c.path }))
+      );
+
+      for (const cookie of cookies) {
+        // Construir la URL exacta con el dominio y path específico de CADA cookie
+        const cookieUrl = `https://${cookie.domain.startsWith('.') 
+          ? cookie.domain.slice(1) 
+          : cookie.domain}${cookie.path}`;
+        
+        try {
+          await chrome.cookies.remove({ 
+            url: cookieUrl, 
+            name: cookie.name 
+          });
+          console.log(`[WJ Extension] Eliminada: ${cookie.name} en ${cookieUrl}`);
+        } catch(e) {
+          console.warn(`[WJ Extension] No se pudo eliminar: ${cookie.name} en ${cookieUrl}`, e);
+        }
+      }
+
+      const restantes = await chrome.cookies.getAll({ domain: 'sunat.gob.pe' });
+      console.log(`[WJ Extension] Cookies restantes: ${restantes.length}`, 
+        restantes.map(c => ({ name: c.name, domain: c.domain, path: c.path }))
+      );
+  } catch (err) {
+      console.error("[WJ Extension] Error limpiando cookies", err);
+  }
 }

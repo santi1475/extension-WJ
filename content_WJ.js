@@ -1,6 +1,13 @@
 document.addEventListener('WJ_LOGIN_REQUEST', function(e) {
   const loginData = e.detail;
-  console.log("Extensión: Solicitud recibida desde ERP", loginData);
+  const safeData = {
+      ...loginData,
+      pasos: loginData.pasos?.map(p => ({
+          ...p,
+          valor: (p.accion === 'escribir' ? (p.selector.includes('Contrasena') ? '***' : p.valor) : p.valor)
+      }))
+  };
+  console.log("[WJ Content] Evento DOM WJ_LOGIN_REQUEST interceptado desde Front. Payload:", safeData);
 
   chrome.runtime.sendMessage({
       action: "START_LOGIN",
@@ -8,7 +15,7 @@ document.addEventListener('WJ_LOGIN_REQUEST', function(e) {
   }, (response) => {
       if (chrome.runtime.lastError) {
           console.warn("WJ Extension: No se pudo conectar con la extensión.", chrome.runtime.lastError.message);
-          dispatchStatus("ERROR", "No se pudo conectar con la extensión. Recargue la página.");
+          dispatchStatus("ERROR", "No se pudo conectar con la extensión. Rxecargue la página.");
       } else {
         console.log("Respuesta inicial extensión:", response);
       }
