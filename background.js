@@ -65,13 +65,11 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
     let intentos = 0;
     let inyectando = false;
     let fallbackTimeout = null;
-    const MAX_INTENTOS = 15; // Límite para evitar loops infinitos de redirect
+    const MAX_INTENTOS = 15; 
 
-    // Listener con nombre para poder removerlo después
     const updateListener = function(uTabId, info, tab) {
       if (uTabId !== tabId) return;
 
-      // Si la página empieza a cargar (redirección), reseteamos el candado
       if (info.status === "loading") {
           console.log(`[WJ Extension] Página recargando/redirigiendo. Reseteando candado de inyección.`);
           inyectando = false;
@@ -98,10 +96,19 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
         const currentUrl = tab?.url || '';
         console.log(`[WJ Extension] Intento de inyección #${intentos + 1} en URL: ${currentUrl}`);
 
-        // Detectar si ya estamos autenticados (SUNAT redirigió al menú post-login)
-        if (currentUrl.includes('MenuInternet.htm') && currentUrl.includes('pestana=')) {
-            console.log(`[WJ Extension] ✅ Autenticación exitosa detectada por URL post-login: ${currentUrl}`);
-            notifyCaller(callerTabId, "SUCCESS", "Login exitoso — sesión activa detectada.");
+        const postLoginPatterns = [
+            // SUNAT Menu
+            { test: (u) => (u.includes('MenuInternet.htm') || u.includes('AutenticaMenuInternetPlataforma.htm')) && u.includes('pestana='), name: "SUNAT" },
+            // MITRA (Ministerio de Trabajo)
+            { test: (u) => u.includes('trabajo.gob.pe/sigac/app'), name: "MITRA" },
+            // SUNAFIL Casilla
+            { test: (u) => u.includes('sunafil.gob.pe/si.inbox') && !u.includes('oauth2/login'), name: "SUNAFIL" },
+        ];
+
+        const matchedPattern = postLoginPatterns.find(p => p.test(currentUrl));
+        if (matchedPattern) {
+            console.log(`[WJ Extension] ✅ Autenticación exitosa detectada (${matchedPattern.name}) por URL post-login: ${currentUrl}`);
+            notifyCaller(callerTabId, "SUCCESS", `Login exitoso en ${matchedPattern.name} — sesión activa detectada.`);
             chrome.tabs.onUpdated.removeListener(updateListener);
             inyectando = false;
             return;
@@ -109,7 +116,6 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
 
         notifyCaller(callerTabId, "INFO", "Página detectada. Intentando inyectar credenciales...");
 
-        // Timeout de seguridad en caso de que executeScript nunca retorne
         fallbackTimeout = setTimeout(() => {
             if (inyectando) {
                 console.warn(`[WJ Extension] Timeout de seguridad (15s): executeScript no retornó. Reseteando candado.`);
@@ -194,7 +200,6 @@ function genericExecutor(pasos) {
         for (const p of pasos) {
             const el = await wait(p.selector);
             if(!el) {
-                // Diagnóstico: capturar qué hay en la página cuando no se encuentra el selector
                 const pageInfo = {
                     url: window.location.href,
                     title: document.title,
@@ -219,21 +224,17 @@ function genericExecutor(pasos) {
             if (p.accion === 'escribir') {
                 console.log(`[WJ Extension] Valor actual antes de inyectar: "${el.value}"`);
                 
-                // Limpiar el campo primero
                 el.focus();
                 el.value = '';
                 el.dispatchEvent(new Event('input', {bubbles: true}));
-                
-                // Simular tipeo carácter por carácter
+
                 for (const char of p.valor) {
                     el.dispatchEvent(new KeyboardEvent('keydown', {key: char, code: 'Key' + char.toUpperCase(), bubbles: true}));
                     el.dispatchEvent(new KeyboardEvent('keypress', {key: char, code: 'Key' + char.toUpperCase(), bubbles: true}));
                     
-                    // Actualizar el valor acumulando cada carácter
                     const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
                     nativeSetter.call(el, el.value + char);
                     
-                    // InputEvent con data — esto es lo que React escucha
                     el.dispatchEvent(new InputEvent('input', {
                         bubbles: true,
                         inputType: 'insertText',

@@ -12,17 +12,19 @@
     "https://*.sunat.gob.pe/*",
     "https://*.afpnet.com.pe/*",
     "https://*.sunafil.gob.pe/*",
-    "http://*.sis.gob.pe/*"
-  ],
-  "optional_host_permissions": [
-    "http://*/*",
-    "https://*/*"
+    "https://*.trabajo.gob.pe/*",
+    "http://*.sis.gob.pe/*",
+    "http://localhost:3000/*"
   ],
   "content_scripts": [
     {
       "matches": [
         "http://localhost:3000/*",
-        "https://*/*"
+        "https://*.sunat.gob.pe/*",
+        "https://*.afpnet.com.pe/*",
+        "https://*.sunafil.gob.pe/*",
+        "https://*.trabajo.gob.pe/*",
+        "http://*.sis.gob.pe/*"
       ],
       "js": [
         "content_WJ.js"
