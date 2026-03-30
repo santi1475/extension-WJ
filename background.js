@@ -5,12 +5,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     chrome.storage.sync.get(['targetOrigin'], (result) => {
       const authorizedErp = result.targetOrigin;
       
-      const allowedOrigins = [
-        authorizedErp,
-        "http://localhost:3000"
+      const defaultAllowedOrigins = [
+        "https://wjasesoriaerp.com",
+        "https://www.wjasesoriaerp.com",
+        "http://localhost:3000",
       ];
 
-      const isAllowed = allowedOrigins.some(allowed => allowed && sender.origin.startsWith(allowed));
+      // Si el usuario configuró un ERP en Opciones, ese ORIGIN también queda permitido.
+      // Si no configuró nada, igual permitimos el dominio oficial por defecto.
+      const allowedOrigins = [
+        ...defaultAllowedOrigins,
+        ...(authorizedErp ? [authorizedErp] : []),
+      ];
+
+      const isAllowed =
+        !!sender.origin &&
+        (
+          // Match exacto de origins declarados
+          allowedOrigins.includes(sender.origin) ||
+          // Permitir subdominios del dominio oficial (p.ej. https://app.wjasesoriaerp.com)
+          sender.origin.endsWith(".wjasesoriaerp.com")
+        );
 
       if (isAllowed) {
           handleLogin(message.payload, sender.tab.id, sender.tab.windowId);

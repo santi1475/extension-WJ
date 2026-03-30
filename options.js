@@ -10,7 +10,9 @@ const els = {
 
 document.addEventListener('DOMContentLoaded', () => {
   chrome.storage.sync.get(['targetOrigin'], (res) => {
-    if (res.targetOrigin) updateErpUI(res.targetOrigin);
+    // Si no hay configuración previa, mostrar tu dominio oficial como default (sin obligar al usuario a guardar).
+    const fallback = 'https://wjasesoriaerp.com';
+    updateErpUI(res.targetOrigin || fallback);
   });
   loadPermissions();
 });

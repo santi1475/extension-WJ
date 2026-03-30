@@ -1,9 +1,10 @@
 {
   "manifest_version": 3,
   "name": "WJ AutoLogin Universal",
-  "version": "3.3.1",
+  "version": "3.3.5",
   "permissions": [
     "cookies",
+    "permissions",
     "scripting",
     "storage",
     "activeTab"
@@ -15,13 +16,15 @@
     "https://*.trabajo.gob.pe/*",
     "http://*.sis.gob.pe/*",
     "http://localhost:3000/*",
-    "https://wjasesoriaerp/*"
+    "https://wjasesoriaerp.com/*",
+    "https://*.wjasesoriaerp.com/*"
   ],
   "content_scripts": [
     {
       "matches": [
         "http://localhost:3000/*",
-        "https://wjasesoriaerp/*",
+        "https://wjasesoriaerp.com/*",
+        "https://*.wjasesoriaerp.com/*",
         "https://*.sunat.gob.pe/*",
         "https://*.afpnet.com.pe/*",
         "https://*.sunafil.gob.pe/*",
