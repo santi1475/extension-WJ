@@ -11,8 +11,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         "http://localhost:3000",
       ];
 
-      // Si el usuario configuró un ERP en Opciones, ese ORIGIN también queda permitido.
-      // Si no configuró nada, igual permitimos el dominio oficial por defecto.
       const allowedOrigins = [
         ...defaultAllowedOrigins,
         ...(authorizedErp ? [authorizedErp] : []),
@@ -45,7 +43,6 @@ async function handleLogin(data, callerTabId, callerWindowId) {
   
   notifyCaller(callerTabId, "INFO", "Limpiando cookies...");
 
-  // ANTES de limpiar
   const cookiesAntes = await chrome.cookies.getAll({ url: url });
   console.log('[WJ Extension] Cookies ANTES de limpiar:', 
     cookiesAntes.map(c => ({ name: c.name, value: c.value }))
@@ -80,6 +77,7 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
     let intentos = 0;
     let inyectando = false;
     let fallbackTimeout = null;
+    let contadorInyeccion = 0;
     const MAX_INTENTOS = 15; 
 
     const updateListener = function(uTabId, info, tab) {
@@ -106,9 +104,14 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
             return;
         }
 
-        inyectando = true;
-
         const currentUrl = tab?.url || '';
+
+        // OMITIR páginas de error conocidas para no gastar intentos
+        if (currentUrl.includes('/oauth2/error') || currentUrl.includes('error-login')) {
+            console.log(`[WJ Extension] Ignorando página de error detectada: ${currentUrl}`);
+            return;
+        }
+
         console.log(`[WJ Extension] Intento de inyección #${intentos + 1} en URL: ${currentUrl}`);
 
         const postLoginPatterns = [
@@ -118,6 +121,8 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
             { test: (u) => u.includes('trabajo.gob.pe/sigac/app'), name: "MITRA" },
             // SUNAFIL Casilla
             { test: (u) => u.includes('sunafil.gob.pe/si.inbox') && !u.includes('oauth2/login'), name: "SUNAFIL" },
+            // SIS Portal
+            { test: (u) => u.includes('sis.gob.pe/Portal/ConsultasSIASIS'), name: "SIS" },
         ];
 
         const matchedPattern = postLoginPatterns.find(p => p.test(currentUrl));
@@ -128,8 +133,25 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
             inyectando = false;
             return;
         }
+        // Si ya inyectamos 2 veces (rellenado completo + rellenado sin click), nos detenemos.
+        if (contadorInyeccion >= 2) {
+            console.warn(`[WJ Extension] Límite de intentos de inyección alcanzado.`);
+            chrome.tabs.onUpdated.removeListener(updateListener);
+            return;
+        }
 
-        notifyCaller(callerTabId, "INFO", "Página detectada. Intentando inyectar credenciales...");
+        let pasosAInyectar = pasos;
+        let esSegundoIntento = (contadorInyeccion === 1);
+
+        if (esSegundoIntento) {
+            console.log(`[WJ Extension] Segundo intento: Rellenando campos sin hacer click.`);
+            pasosAInyectar = pasos.filter(p => p.accion === 'escribir');
+            notifyCaller(callerTabId, "INFO", "Reintentando... Rellenando datos sin enviar para revisión.");
+        } else {
+            notifyCaller(callerTabId, "INFO", "Página detectada. Intentando inyectar credenciales...");
+        }
+
+        inyectando = true;
 
         fallbackTimeout = setTimeout(() => {
             if (inyectando) {
@@ -141,14 +163,14 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
         chrome.scripting.executeScript({
           target: { tabId: tabId },
           func: genericExecutor,
-          args: [pasos], 
+          args: [pasosAInyectar], 
         }, (results) => {
             inyectando = false;
             if (fallbackTimeout) clearTimeout(fallbackTimeout);
 
             const err = chrome.runtime.lastError;
-            
-            console.log(`[WJ Extension] Callback de executeScript. Error:`, err?.message, `| Resultados crudos:`, results);
+            const res = results?.[0]?.result;
+            const selectorNoEncontrado = res && !res.success && res.error && res.error.includes("Selector no encontrado");
 
             if (err) {
                 if (err.message.includes("Frame with ID 0 was removed") || err.message.includes("The tab was closed")) {
@@ -162,15 +184,31 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
                 return;
             }
 
+            if (selectorNoEncontrado) {
+                console.warn(`[WJ Extension] Campos no encontrados en esta URL. No se cuenta como intento.`);
+                return; // Mantenemos el listener vivo para cuando caiga en el form
+            }
+
+            // Si llegamos aquí, es que encontramos los campos e intentamos operar
+            contadorInyeccion++;
+            
+            console.log(`[WJ Extension] Callback de executeScript. Resultados crudos:`, results);
+
+            if (esSegundoIntento) {
+              console.log(`[WJ Extension] Segundo intento completado (solo rellenado).`);
+              notifyCaller(callerTabId, "ERROR", "Login fallido. Los datos se han rellenado nuevamente, por favor verifique e ingrese manualmente.");
+              chrome.tabs.onUpdated.removeListener(updateListener);
+              return;
+            }
+
             // Si result es null, la página redirigió y Chrome destruyó el script.
             // NO removemos el listener — esperamos al siguiente "complete" en la página final.
-            if (!results || !results[0] || results[0].result === null || results[0].result === undefined) {
-                console.warn(`[WJ Extension] Resultado nulo — la página redirigió durante la inyección. Esperando siguiente carga...`);
+            if (!res) {
+                console.warn(`[WJ Extension] Resultado vacío — posiblemente redirigió durante la inyección. Esperando siguiente carga...`);
                 return; // Mantener listener vivo
             }
 
             chrome.tabs.onUpdated.removeListener(updateListener);
-            const res = results[0].result;
             if (res.success) {
                 console.log(`[WJ Extension] -> ÉXITO devuelto por la pestaña`);
                 notifyCaller(callerTabId, "SUCCESS", "Credenciales ingresadas correctamente.");
@@ -183,6 +221,7 @@ function setupInjectionListener(tabId, callerTabId, pasos) {
         intentos++;
       }
     };
+
 
     // Activamos el listener
     chrome.tabs.onUpdated.addListener(updateListener);
