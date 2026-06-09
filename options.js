@@ -5,7 +5,8 @@ const els = {
   targetInput: document.getElementById('targetInput'),
   btnAddTarget: document.getElementById('btnAddTarget'),
   permList: document.getElementById('permList'),
-  status: document.getElementById('status')
+  status: document.getElementById('status'),
+  chkUseTabMode: document.getElementById('chkUseTabMode')
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -14,7 +15,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const fallback = 'https://wjasesoriaerp.com';
     updateErpUI(res.targetOrigin || fallback);
   });
+  
+  // Cargar configuración local de este dispositivo
+  chrome.storage.local.get(['useTabMode'], (res) => {
+    if (els.chkUseTabMode) {
+      els.chkUseTabMode.checked = !!res.useTabMode;
+    }
+  });
+
   loadPermissions();
+});
+
+// Guardar configuración local al cambiar el checkbox
+els.chkUseTabMode.addEventListener('change', (e) => {
+  chrome.storage.local.set({ useTabMode: e.target.checked }, () => {
+    showToast('Ajuste del dispositivo guardado', 'success');
+  });
 });
 
 els.btnSaveErp.addEventListener('click', async () => {

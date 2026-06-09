@@ -41,6 +41,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function handleLogin(data, callerTabId, callerWindowId) {
   const { url, pasos, openInTab } = data;
   
+  // Obtener configuracion del dispositivo y detectar si es movil
+  const localRes = await new Promise((resolve) => {
+    chrome.storage.local.get(['useTabMode'], resolve);
+  });
+  
+  const isMobile = typeof navigator !== 'undefined' && 
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  
+  const shouldOpenInTab = openInTab || !!localRes.useTabMode || isMobile;
+  
+  console.log(`[WJ Extension] Habilitado modo pestaña: ${shouldOpenInTab} (openInTab: ${openInTab}, useTabMode: ${localRes.useTabMode}, isMobile: ${isMobile})`);
+
   notifyCaller(callerTabId, "INFO", "Limpiando cookies...");
 
   const cookiesAntes = await chrome.cookies.getAll({ url: url });
@@ -54,7 +66,7 @@ async function handleLogin(data, callerTabId, callerWindowId) {
   const cookiesDespues = await chrome.cookies.getAll({ url: url });
   console.log('[WJ Extension] Cookies DESPUÉS de limpiar:', cookiesDespues);
 
-  if (openInTab) {
+  if (shouldOpenInTab) {
     chrome.tabs.create({ url: url, windowId: callerWindowId, active: true }, (tab) => {
       if (chrome.runtime.lastError || !tab) {
           notifyCaller(callerTabId, "ERROR", "No se pudo crear la pestaña de login.");
