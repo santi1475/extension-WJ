@@ -19,7 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Cargar configuración local de este dispositivo
   chrome.storage.local.get(['useTabMode'], (res) => {
     if (els.chkUseTabMode) {
-      els.chkUseTabMode.checked = !!res.useTabMode;
+      els.chkUseTabMode.checked = res.useTabMode !== false;
     }
   });
 

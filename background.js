@@ -49,7 +49,7 @@ async function handleLogin(data, callerTabId, callerWindowId) {
   const isMobile = typeof navigator !== 'undefined' && 
     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
-  const shouldOpenInTab = openInTab || !!localRes.useTabMode || isMobile;
+  const shouldOpenInTab = openInTab || localRes.useTabMode !== false || isMobile;
   
   console.log(`[WJ Extension] Habilitado modo pestaña: ${shouldOpenInTab} (openInTab: ${openInTab}, useTabMode: ${localRes.useTabMode}, isMobile: ${isMobile})`);
 
