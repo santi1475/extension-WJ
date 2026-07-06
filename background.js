@@ -49,70 +49,38 @@ async function handleLogin(data, callerTabId, callerWindowId) {
   const isMobile = typeof navigator !== 'undefined' && 
     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
-  const shouldOpenInTab = openInTab || localRes.useTabMode !== false || isMobile;
+  // Por defecto, se abre en pestaña según configuración del dispositivo (useTabMode o móvil) o si viene configurado en la petición
+  let shouldOpenInTab = openInTab || localRes.useTabMode !== false || isMobile;
   
-  console.log(`[WJ Extension] Habilitado modo pestaña: ${shouldOpenInTab} (openInTab: ${openInTab}, useTabMode: ${localRes.useTabMode}, isMobile: ${isMobile})`);
+  // Para Mis Tramites y Consultas, Mis Declaraciones y Pagos y Declara Renta Anual:
+  // No se abren en pestaña nueva (sino en popup) excepto si se fuerza la configuración
+  // de tabletas y dispositivos móviles (es decir, si es móvil o si se activó explícitamente useTabMode en true).
+  const isSpecialAccess = url && (
+    url.includes("AutenticaMenuInternet.htm") ||
+    url.includes("AutenticaMenuInternetPlataforma.htm") ||
+    url.includes("recaudaciontributaria/declaracionpago/formularios")
+  );
 
-  // Detección de sesión activa de SUNAT para forzar incógnito
-  const isSunat = url.includes("sunat.gob.pe");
-  let useIncognito = false;
-  let targetStoreId = null;
-
-  if (isSunat) {
-    try {
-      const sunatTabs = await chrome.tabs.query({ url: "*://*.sunat.gob.pe/*" });
-      const hasNormalSessionTab = sunatTabs.some(t => !t.incognito);
-
-      if (hasNormalSessionTab) {
-        console.log("[WJ Extension] Se detectó otra pestaña normal de SUNAT activa. Intentando usar modo Incógnito...");
-        const isAllowedIncognito = await chrome.extension.isAllowedIncognitoAccess();
-        if (isAllowedIncognito) {
-          useIncognito = true;
-          // Buscar el storeId de incógnito
-          const stores = await chrome.cookies.getAllCookieStores();
-          const incognitoStore = stores.find(s => s.incognito);
-          if (incognitoStore) {
-            targetStoreId = incognitoStore.id;
-          }
-        } else {
-          console.warn("[WJ Extension] No se puede usar modo Incógnito porque el permiso no está otorgado por el usuario.");
-          notifyCaller(callerTabId, "ERROR", "Se detectó otra sesión activa de SUNAT. Para abrir esta sesión en paralelo, debes permitir el acceso en incógnito de la extensión. Se abrirá la configuración.");
-          chrome.tabs.create({ url: `chrome://extensions/?id=${chrome.runtime.id}` });
-          return;
-        }
-      }
-    } catch (e) {
-      console.error("[WJ Extension] Error al verificar pestañas de SUNAT o acceso de incógnito:", e);
-    }
+  if (isSpecialAccess && !isMobile && localRes.useTabMode !== true) {
+    shouldOpenInTab = false;
   }
+  
+  console.log(`[WJ Extension] Habilitado modo pestaña: ${shouldOpenInTab} (openInTab: ${openInTab}, useTabMode: ${localRes.useTabMode}, isMobile: ${isMobile}, isSpecialAccess: ${isSpecialAccess})`);
 
-  notifyCaller(callerTabId, "INFO", `Limpiando cookies${useIncognito ? ' de incógnito' : ''}...`);
+  notifyCaller(callerTabId, "INFO", "Limpiando cookies...");
 
-  const queryConfig = { url: url };
-  if (targetStoreId) {
-    queryConfig.storeId = targetStoreId;
-  }
-  const cookiesAntes = await chrome.cookies.getAll(queryConfig);
-  console.log(`[WJ Extension] Cookies ANTES de limpiar [Store: ${targetStoreId || 'default'}]:`, 
+  const cookiesAntes = await chrome.cookies.getAll({ url: url });
+  console.log('[WJ Extension] Cookies ANTES de limpiar:', 
     cookiesAntes.map(c => ({ name: c.name, value: c.value }))
   );
 
-  await clearCookiesForUrl(url, targetStoreId);
+  await clearCookiesForUrl(url);
 
   // DESPUÉS de limpiar
-  const cookiesDespues = await chrome.cookies.getAll(queryConfig);
-  console.log(`[WJ Extension] Cookies DESPUÉS de limpiar [Store: ${targetStoreId || 'default'}]:`, cookiesDespues);
+  const cookiesDespues = await chrome.cookies.getAll({ url: url });
+  console.log('[WJ Extension] Cookies DESPUÉS de limpiar:', cookiesDespues);
 
-  if (useIncognito) {
-    console.log("[WJ Extension] Abriendo ventana en modo INCÓGNITO...");
-    chrome.windows.create({ url: url, incognito: true, state: "maximized" }, (win) => {
-      if (chrome.runtime.lastError || !win || !win.tabs || win.tabs.length === 0) {
-          notifyCaller(callerTabId, "ERROR", "No se pudo crear la ventana de login en incógnito.");
-          return;
-      }
-      setupInjectionListener(win.tabs[0].id, callerTabId, pasos);
-    });
-  } else if (shouldOpenInTab) {
+  if (shouldOpenInTab) {
     chrome.tabs.create({ url: url, windowId: callerWindowId, active: true }, (tab) => {
       if (chrome.runtime.lastError || !tab) {
           notifyCaller(callerTabId, "ERROR", "No se pudo crear la pestaña de login.");
@@ -380,15 +348,11 @@ function genericExecutor(pasos) {
   });
 }
 
-async function clearCookiesForUrl(url, storeId) {
+async function clearCookiesForUrl(url) {
   try {
-      const queryConfig = { domain: 'sunat.gob.pe' };
-      if (storeId) {
-        queryConfig.storeId = storeId;
-      }
-      const cookies = await chrome.cookies.getAll(queryConfig);
+      const cookies = await chrome.cookies.getAll({ domain: 'sunat.gob.pe' });
       
-      console.log(`[WJ Extension] Cookies a eliminar (${cookies.length}) [Store: ${storeId || 'default'}]:`, 
+      console.log(`[WJ Extension] Cookies a eliminar (${cookies.length}):`, 
         cookies.map(c => ({ name: c.name, domain: c.domain, path: c.path }))
       );
 
@@ -399,26 +363,18 @@ async function clearCookiesForUrl(url, storeId) {
           : cookie.domain}${cookie.path}`;
         
         try {
-          const removeConfig = { 
+          await chrome.cookies.remove({ 
             url: cookieUrl, 
             name: cookie.name 
-          };
-          if (storeId) {
-            removeConfig.storeId = storeId;
-          }
-          await chrome.cookies.remove(removeConfig);
-          console.log(`[WJ Extension] Eliminada: ${cookie.name} en ${cookieUrl} [Store: ${storeId || 'default'}]`);
+          });
+          console.log(`[WJ Extension] Eliminada: ${cookie.name} en ${cookieUrl}`);
         } catch(e) {
           console.warn(`[WJ Extension] No se pudo eliminar: ${cookie.name} en ${cookieUrl}`, e);
         }
       }
 
-      const checkConfig = { domain: 'sunat.gob.pe' };
-      if (storeId) {
-        checkConfig.storeId = storeId;
-      }
-      const restantes = await chrome.cookies.getAll(checkConfig);
-      console.log(`[WJ Extension] Cookies restantes: ${restantes.length} [Store: ${storeId || 'default'}]`, 
+      const restantes = await chrome.cookies.getAll({ domain: 'sunat.gob.pe' });
+      console.log(`[WJ Extension] Cookies restantes: ${restantes.length}`, 
         restantes.map(c => ({ name: c.name, domain: c.domain, path: c.path }))
       );
   } catch (err) {
