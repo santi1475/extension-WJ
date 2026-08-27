@@ -334,6 +334,14 @@ function genericExecutor(pasos) {
                 const inputs = document.querySelectorAll('input');
                 const inputsState = Array.from(inputs).map(i => ({ id: i.id, name: i.name, type: i.type, value: i.value }));
                 console.log(`[WJ Extension] Haciendo click en ${p.selector} - Estado de campos input:`, inputsState);
+                // mousedown/mouseup ADEMÁS del click: `el.click()` dispara solo el evento
+                // 'click', y los widgets viejos de jQuery UI escuchan mousedown/mouseup.
+                // El combo de tipo de documento del Banco de la Nación es uno de esos
+                // (jQuery 1.7.2 + selectmenu): con `el.click()` el <select> se quedaba en
+                // "Seleccione...". Un click de verdad dispara los tres, así que esto se
+                // parece MÁS a un usuario, no menos.
+                el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+                el.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
                 el.click();
             }
             
